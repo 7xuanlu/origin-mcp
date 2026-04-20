@@ -603,6 +603,73 @@ async fn t11_extraction_method_none_not_in_text() {
     assert_eq!(text, "Stored mem_t11");
 }
 
+/// Regression test: context_impl must succeed even when the daemon returns
+/// extra fields in the ChatContextResponse that origin-types v0.1.0 doesn't know
+/// about (e.g. future enrichment fields added to SearchResult or top-level).
+#[tokio::test]
+async fn t13_context_forward_compat_with_extra_fields() {
+    // Simulate a future daemon response that adds unknown fields to
+    // relevant_memories items and to the top-level response.
+    let raw_json = serde_json::json!({
+        "context": "you are Lucian",
+        "profile": {
+            "narrative": "n",
+            "identity": ["rust developer"],
+            "preferences": [],
+            "goals": []
+        },
+        "knowledge": {
+            "relevant_memories": [{
+                "id": "1",
+                "content": "some memory",
+                "source": "memory",
+                "source_id": "mem_r1",
+                "title": "title",
+                "url": null,
+                "chunk_index": 0,
+                "last_modified": 0,
+                "score": 0.9,
+                "is_archived": false,
+                "is_recap": false,
+                "raw_score": 0.0,
+                "unknown_future_field": "this should not break deserialization",
+                "another_new_field": {"nested": "object"}
+            }],
+            "graph_context": [],
+            "concepts": [],
+            "decisions": []
+        },
+        "took_ms": 12.0,
+        "token_estimates": {
+            "tier1_identity": 5,
+            "tier2_project": 10,
+            "tier3_relevant": 15,
+            "total": 30
+        },
+        "top_level_future_field": "also ignored"
+    });
+
+    let (mock, client) = setup().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat-context"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&raw_json))
+        .mount(&mock)
+        .await;
+
+    let server = make_server(client);
+    let result = server
+        .context_impl(ContextParams {
+            topic: None,
+            limit: None,
+            domain: None,
+        })
+        .await
+        .expect("context_impl must succeed even with extra unknown fields in response");
+
+    let text = text_of(&result);
+    assert_eq!(text, "you are Lucian");
+}
+
 #[tokio::test]
 async fn t12_forward_compat_response_missing_extraction_method() {
     let raw_json = serde_json::json!({

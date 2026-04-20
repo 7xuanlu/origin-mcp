@@ -246,18 +246,31 @@ impl OriginMcpServer {
             domain: params.domain,
         };
 
-        let resp: ChatContextResponse = self
+        // Extract only the `context` string field from the response.
+        //
+        // The full ChatContextResponse embeds Vec<SearchResult> which may
+        // contain fields added after the published origin-types version.
+        // Since context_impl only uses `resp.context`, we parse the raw
+        // JSON and pull that field directly — this makes the tool forward-
+        // compatible with any new fields the daemon might add.
+        let raw: serde_json::Value = self
             .client
             .post("/api/chat-context", &req)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        if resp.context.is_empty() {
+        let context = raw
+            .get("context")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        if context.is_empty() {
             Ok(CallToolResult::success(vec![Content::text(
                 "No relevant context found".to_string(),
             )]))
         } else {
-            Ok(CallToolResult::success(vec![Content::text(resp.context)]))
+            Ok(CallToolResult::success(vec![Content::text(context)]))
         }
     }
 

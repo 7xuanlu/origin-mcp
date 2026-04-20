@@ -46,9 +46,18 @@ impl OriginClient {
             return Err(OriginError::Api { status, body });
         }
 
-        resp.json()
-            .await
-            .map_err(|e| OriginError::Deserialize(e.to_string()))
+        let bytes = resp.bytes().await.map_err(|e| {
+            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
+        })?;
+
+        serde_json::from_slice::<R>(&bytes).map_err(|e| {
+            let preview = std::str::from_utf8(&bytes)
+                .unwrap_or("<non-utf8>")
+                .chars()
+                .take(512)
+                .collect::<String>();
+            OriginError::Deserialize(format!("{e} (body preview: {preview})"))
+        })
     }
 
     /// POST request with JSON body, deserialize JSON response.
@@ -72,9 +81,22 @@ impl OriginClient {
             return Err(OriginError::Api { status, body });
         }
 
-        resp.json()
-            .await
-            .map_err(|e| OriginError::Deserialize(e.to_string()))
+        // Collect bytes first so that a body-read failure is distinguished
+        // from a JSON parse failure, and the full error chain is preserved.
+        let bytes = resp.bytes().await.map_err(|e| {
+            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
+        })?;
+
+        serde_json::from_slice::<R>(&bytes).map_err(|e| {
+            // Include the first 512 bytes of the body to aid debugging without
+            // flooding logs with potentially large payloads.
+            let preview = std::str::from_utf8(&bytes)
+                .unwrap_or("<non-utf8>")
+                .chars()
+                .take(512)
+                .collect::<String>();
+            OriginError::Deserialize(format!("{e} (body preview: {preview})"))
+        })
     }
 
     /// DELETE request, deserialize JSON response.
@@ -93,9 +115,18 @@ impl OriginClient {
             return Err(OriginError::Api { status, body });
         }
 
-        resp.json()
-            .await
-            .map_err(|e| OriginError::Deserialize(e.to_string()))
+        let bytes = resp.bytes().await.map_err(|e| {
+            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
+        })?;
+
+        serde_json::from_slice::<R>(&bytes).map_err(|e| {
+            let preview = std::str::from_utf8(&bytes)
+                .unwrap_or("<non-utf8>")
+                .chars()
+                .take(512)
+                .collect::<String>();
+            OriginError::Deserialize(format!("{e} (body preview: {preview})"))
+        })
     }
 }
 
