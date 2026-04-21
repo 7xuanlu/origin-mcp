@@ -43,6 +43,7 @@ pub enum TransportMode {
 
 #[derive(Clone)]
 pub struct OriginMcpServer {
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     client: OriginClient,
     transport: TransportMode,
