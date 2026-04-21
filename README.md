@@ -13,7 +13,7 @@ Add to your MCP config (Claude Code, Cursor, Claude Desktop, Windsurf, Gemini CL
   "mcpServers": {
     "origin": {
       "command": "npx",
-      "args": ["-y", "@origin-memory/mcp"]
+      "args": ["-y", "origin-mcp"]
     }
   }
 }
@@ -61,7 +61,7 @@ Origin daemon (origin-server)
 Local SQLite + embeddings + knowledge graph
 ```
 
-If the daemon isn't running, `npx @origin-memory/mcp` starts it automatically.
+If the daemon isn't running, `npx origin-mcp` starts it automatically.
 
 ## Tools
 
