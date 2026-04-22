@@ -1,4 +1,4 @@
-use crate::client::OriginClient;
+use crate::client::{OriginClient, OriginError};
 use crate::types::*;
 use rmcp::{
     handler::server::router::tool::ToolRouter,
@@ -150,6 +150,26 @@ fn format_remember_success(resp: &StoreMemoryResponse) -> String {
     msg
 }
 
+/// Convert a backend error into a tool-level error result (isError: true)
+/// with an actionable message. This keeps the MCP transport healthy
+/// (no protocol-level McpError) while telling the caller what happened.
+fn tool_error(e: OriginError, verb: &str) -> CallToolResult {
+    let msg = match &e {
+        OriginError::Unreachable(_) => format!(
+            "Origin daemon is not reachable (retried 3x over ~6s). \
+             The {verb} was NOT completed. Try again after the daemon is running."
+        ),
+        OriginError::Api { status, body } => format!(
+            "Origin daemon returned HTTP {status}: {body}. The {verb} may not have completed."
+        ),
+        OriginError::Deserialize(detail) => format!(
+            "Failed to parse daemon response: {detail}. \
+             This may indicate a version mismatch between origin-mcp and the daemon."
+        ),
+    };
+    CallToolResult::error(vec![Content::text(msg)])
+}
+
 impl OriginMcpServer {
     /// Resolve the source_agent for a write operation.
     /// Priority: explicit param > MCP client name (from initialize) > configured agent_name.
@@ -200,11 +220,10 @@ impl OriginMcpServer {
             retrieval_cue: params.retrieval_cue,
         };
 
-        let resp: StoreMemoryResponse = self
-            .client
-            .post("/api/memory/store", &req)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let resp: StoreMemoryResponse = match self.client.post("/api/memory/store", &req).await {
+            Ok(r) => r,
+            Err(e) => return Ok(tool_error(e, "memory store")),
+        };
 
         Ok(CallToolResult::success(vec![Content::text(
             format_remember_success(&resp),
@@ -220,11 +239,10 @@ impl OriginMcpServer {
             source_agent: self.resolve_source_agent(None),
         };
 
-        let resp: SearchMemoryResponse = self
-            .client
-            .post("/api/memory/search", &req)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let resp: SearchMemoryResponse = match self.client.post("/api/memory/search", &req).await {
+            Ok(r) => r,
+            Err(e) => return Ok(tool_error(e, "search")),
+        };
 
         let json = serde_json::to_string_pretty(&resp.results)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -254,11 +272,10 @@ impl OriginMcpServer {
         // Since context_impl only uses `resp.context`, we parse the raw
         // JSON and pull that field directly — this makes the tool forward-
         // compatible with any new fields the daemon might add.
-        let raw: serde_json::Value = self
-            .client
-            .post("/api/chat-context", &req)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let raw: serde_json::Value = match self.client.post("/api/chat-context", &req).await {
+            Ok(r) => r,
+            Err(e) => return Ok(tool_error(e, "context load")),
+        };
 
         let context = raw
             .get("context")
@@ -284,11 +301,14 @@ impl OriginMcpServer {
             )]));
         }
 
-        let resp: DeleteResponse = self
+        let resp: DeleteResponse = match self
             .client
             .delete(&format!("/api/memory/delete/{}", memory_id))
             .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        {
+            Ok(r) => r,
+            Err(e) => return Ok(tool_error(e, "delete")),
+        };
 
         Ok(CallToolResult::success(vec![Content::text(
             if resp.deleted {
@@ -1074,11 +1094,13 @@ mod tests {
     #[tokio::test]
     async fn test_forget_allowed_on_stdio_transport() {
         // This will fail with connection error (no server), which proves
-        // the transport check passed and it tried to make the HTTP call
+        // the transport check passed and it tried to make the HTTP call.
+        // The error comes back as CallToolResult with is_error: true
+        // (tool-level failure), not McpError (protocol-level).
         let server = make_server(TransportMode::Stdio, "agent", None);
-        let result = server.forget_impl("mem_123").await;
+        let result = server.forget_impl("mem_123").await.unwrap();
         assert!(
-            result.is_err(),
+            result.is_error.unwrap_or(false),
             "should fail with connection error, not transport block"
         );
     }
