@@ -59,15 +59,14 @@ impl OriginClient {
                 Err(e) => return Err(OriginError::Unreachable(e.to_string())),
             }
         }
-        Err(OriginError::Unreachable(
-            last_err.map_or_else(|| "connection failed".into(), |e| e.to_string()),
-        ))
+        Err(OriginError::Unreachable(last_err.map_or_else(
+            || "connection failed".into(),
+            |e| e.to_string(),
+        )))
     }
 
     /// Parse a successful response body as JSON.
-    fn parse_response<R: DeserializeOwned>(
-        bytes: &[u8],
-    ) -> Result<R, OriginError> {
+    fn parse_response<R: DeserializeOwned>(bytes: &[u8]) -> Result<R, OriginError> {
         serde_json::from_slice::<R>(bytes).map_err(|e| {
             let preview = std::str::from_utf8(bytes)
                 .unwrap_or("<non-utf8>")
@@ -85,9 +84,10 @@ impl OriginClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(OriginError::Api { status, body });
         }
-        resp.bytes().await.map(|b| b.to_vec()).map_err(|e| {
-            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
-        })
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| OriginError::Deserialize(format!("failed to read response body: {e:#}")))
     }
 
     /// GET request, deserialize JSON response.
