@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -22,6 +24,12 @@ pub struct OriginClient {
     base_url: String,
 }
 
+/// Max retries on connection errors (daemon restarting).
+const MAX_RETRIES: u32 = 3;
+/// Backoff per retry: attempt 1 = 1s, attempt 2 = 2s, attempt 3 = 3s.
+/// Total worst-case wait: ~6s, covering a typical daemon restart.
+const BACKOFF_BASE: Duration = Duration::from_secs(1);
+
 impl OriginClient {
     pub fn new(base_url: String) -> Self {
         Self {
@@ -30,34 +38,64 @@ impl OriginClient {
         }
     }
 
-    /// GET request, deserialize JSON response.
-    pub async fn get<R: DeserializeOwned>(&self, path: &str) -> Result<R, OriginError> {
-        let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| OriginError::Unreachable(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OriginError::Api { status, body });
+    /// Retry a request on connection errors (daemon restarting).
+    /// Only retries on connect failures; non-connect errors and HTTP responses
+    /// are returned immediately.
+    async fn send_with_retry(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, OriginError> {
+        let mut last_err = None;
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(BACKOFF_BASE * attempt).await;
+            }
+            match build().send().await {
+                Ok(resp) => return Ok(resp),
+                Err(e) if e.is_connect() => {
+                    tracing::debug!(attempt, "daemon unreachable, retrying");
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(OriginError::Unreachable(e.to_string())),
+            }
         }
+        Err(OriginError::Unreachable(last_err.map_or_else(
+            || "connection failed".into(),
+            |e| e.to_string(),
+        )))
+    }
 
-        let bytes = resp.bytes().await.map_err(|e| {
-            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
-        })?;
-
-        serde_json::from_slice::<R>(&bytes).map_err(|e| {
-            let preview = std::str::from_utf8(&bytes)
+    /// Parse a successful response body as JSON.
+    fn parse_response<R: DeserializeOwned>(bytes: &[u8]) -> Result<R, OriginError> {
+        serde_json::from_slice::<R>(bytes).map_err(|e| {
+            let preview = std::str::from_utf8(bytes)
                 .unwrap_or("<non-utf8>")
                 .chars()
                 .take(512)
                 .collect::<String>();
             OriginError::Deserialize(format!("{e} (body preview: {preview})"))
         })
+    }
+
+    /// Read response body, checking status first.
+    async fn read_body(resp: reqwest::Response) -> Result<Vec<u8>, OriginError> {
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(OriginError::Api { status, body });
+        }
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| OriginError::Deserialize(format!("failed to read response body: {e:#}")))
+    }
+
+    /// GET request, deserialize JSON response.
+    pub async fn get<R: DeserializeOwned>(&self, path: &str) -> Result<R, OriginError> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self.send_with_retry(|| self.client.get(&url)).await?;
+        let bytes = Self::read_body(resp).await?;
+        Self::parse_response(&bytes)
     }
 
     /// POST request with JSON body, deserialize JSON response.
@@ -68,65 +106,18 @@ impl OriginClient {
     ) -> Result<R, OriginError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| OriginError::Unreachable(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OriginError::Api { status, body });
-        }
-
-        // Collect bytes first so that a body-read failure is distinguished
-        // from a JSON parse failure, and the full error chain is preserved.
-        let bytes = resp.bytes().await.map_err(|e| {
-            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
-        })?;
-
-        serde_json::from_slice::<R>(&bytes).map_err(|e| {
-            // Include the first 512 bytes of the body to aid debugging without
-            // flooding logs with potentially large payloads.
-            let preview = std::str::from_utf8(&bytes)
-                .unwrap_or("<non-utf8>")
-                .chars()
-                .take(512)
-                .collect::<String>();
-            OriginError::Deserialize(format!("{e} (body preview: {preview})"))
-        })
+            .send_with_retry(|| self.client.post(&url).json(body))
+            .await?;
+        let bytes = Self::read_body(resp).await?;
+        Self::parse_response(&bytes)
     }
 
     /// DELETE request, deserialize JSON response.
     pub async fn delete<R: DeserializeOwned>(&self, path: &str) -> Result<R, OriginError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .client
-            .delete(&url)
-            .send()
-            .await
-            .map_err(|e| OriginError::Unreachable(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(OriginError::Api { status, body });
-        }
-
-        let bytes = resp.bytes().await.map_err(|e| {
-            OriginError::Deserialize(format!("failed to read response body: {e:#}"))
-        })?;
-
-        serde_json::from_slice::<R>(&bytes).map_err(|e| {
-            let preview = std::str::from_utf8(&bytes)
-                .unwrap_or("<non-utf8>")
-                .chars()
-                .take(512)
-                .collect::<String>();
-            OriginError::Deserialize(format!("{e} (body preview: {preview})"))
-        })
+        let resp = self.send_with_retry(|| self.client.delete(&url)).await?;
+        let bytes = Self::read_body(resp).await?;
+        Self::parse_response(&bytes)
     }
 }
 
