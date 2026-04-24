@@ -93,6 +93,134 @@ async fn test_health_bypasses_auth() {
     handle.abort();
 }
 
+/// Regression: claude.ai MCP context error (Origin Kanban, 2026-04-23).
+///
+/// rmcp 1.5 added DNS-rebinding protection via
+/// `StreamableHttpServerConfig.allowed_hosts`, defaulting to
+/// `[localhost, 127.0.0.1, ::1]`. Production deployments expose this
+/// server through a public tunnel (Cloudflare, ngrok) that forwards the
+/// tunnel hostname in `Host`, so rmcp rejected every tunneled request
+/// with a plain-text 403 "Forbidden: Host header is not allowed" before
+/// any MCP handling. The Anthropic MCP proxy cannot parse that body as
+/// JSON-RPC and surfaces it to users as "-32600 Invalid Request".
+///
+/// This test exercises the production shape: bearer auth on, foreign
+/// Host header, and the full two-leg handshake (`initialize` to mint a
+/// session, then `tools/call` for `context` using that session). Both
+/// legs must return 200; the old default fails the first leg with 403.
+///
+/// The downstream daemon is intentionally unreachable (dead port in
+/// `test_config`) — the HTTP/transport layer is what this test
+/// validates. A failing daemon surfaces as a tool-level error in the
+/// SSE stream, which is orthogonal to the DNS-rebinding bug.
+#[tokio::test]
+async fn test_tunneled_host_passes_full_mcp_handshake_with_auth() {
+    let port = portpicker::pick_unused_port().expect("no free port");
+    let config = test_config(port, Some("test-token".into()));
+
+    let handle = tokio::spawn(async move {
+        origin_mcp::serve::run_serve(config).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    // Leg 1: initialize. Foreign Host + valid bearer token.
+    let init_resp = client
+        .post(format!("http://127.0.0.1:{}/mcp", port))
+        .header("Host", "origin-mcp.example.com")
+        .header("Authorization", "Bearer test-token")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#,
+        )
+        .send()
+        .await
+        .expect("initialize request must complete");
+
+    let init_status = init_resp.status();
+    let session_id = init_resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
+    assert_eq!(
+        init_status, 200,
+        "initialize with tunneled Host + auth must return 200 (was 403 with default allowed_hosts)",
+    );
+    let session_id = session_id.expect("Mcp-Session-Id header must be present after initialize");
+
+    // Leg 2: tools/call context, reusing the session from leg 1.
+    let call_resp = client
+        .post(format!("http://127.0.0.1:{}/mcp", port))
+        .header("Host", "origin-mcp.example.com")
+        .header("Authorization", "Bearer test-token")
+        .header("Mcp-Session-Id", &session_id)
+        .header("Mcp-Protocol-Version", "2025-06-18")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"context","arguments":{}}}"#,
+        )
+        .send()
+        .await
+        .expect("tools/call request must complete");
+
+    assert_eq!(
+        call_resp.status(),
+        200,
+        "tools/call context with tunneled Host + auth must return 200 (rmcp HTTP layer success)",
+    );
+
+    handle.abort();
+}
+
+/// Secondary regression: `--no-auth` loopback mode keeps rmcp's default
+/// DNS-rebinding restriction as defense-in-depth. A request arriving
+/// with a non-loopback Host (only possible through direct-TCP trickery
+/// on the local machine) should still be rejected.
+#[tokio::test]
+async fn test_no_auth_mode_keeps_allowed_hosts_restriction() {
+    let port = portpicker::pick_unused_port().expect("no free port");
+    let config = test_config(port, None);
+
+    let handle = tokio::spawn(async move {
+        origin_mcp::serve::run_serve(config).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/mcp", port))
+        .header("Host", "rebinding-attacker.example.com")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status, 403,
+        "--no-auth loopback mode must keep rmcp's Host restriction; got {status} {body}"
+    );
+    assert!(
+        body.contains("Host header is not allowed"),
+        "response must be the rmcp DNS-rebinding reject body; got: {body}"
+    );
+
+    handle.abort();
+}
+
 #[tokio::test]
 async fn test_rejects_disallowed_origin() {
     let port = portpicker::pick_unused_port().expect("no free port");

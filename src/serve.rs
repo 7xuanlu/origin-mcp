@@ -42,6 +42,21 @@ pub async fn run_serve(config: ServeConfig) -> anyhow::Result<()> {
     let token = config.token.clone();
     let allowed_origins = config.allowed_origins.clone();
 
+    // rmcp's default allowed_hosts = [localhost, 127.0.0.1, ::1] gives
+    // DNS-rebinding protection for loopback deployments. With auth on,
+    // this server is meant to be reached through a public tunnel whose
+    // Host header is non-loopback; leaving the default in place rejects
+    // every tunneled request with a plain-text 403 the upstream MCP
+    // proxy cannot parse, surfacing as a bogus "-32600 Invalid Request".
+    // Bearer auth plus the CORS Origin allowlist gate access in that
+    // mode. --no-auth (loopback only, enforced in main.rs) keeps the
+    // restriction as defense-in-depth.
+    let mcp_config = if token.is_some() {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    } else {
+        StreamableHttpServerConfig::default()
+    };
+
     let mcp_service = StreamableHttpService::new(
         move || {
             Ok(OriginMcpServer::new(
@@ -52,7 +67,7 @@ pub async fn run_serve(config: ServeConfig) -> anyhow::Result<()> {
             ))
         },
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
+        mcp_config,
     );
 
     let cors = build_cors_layer(&config.allowed_origins);
