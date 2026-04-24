@@ -181,12 +181,14 @@ async fn test_tunneled_host_passes_full_mcp_handshake_with_auth() {
     handle.abort();
 }
 
-/// Secondary regression: `--no-auth` loopback mode keeps rmcp's default
-/// DNS-rebinding restriction as defense-in-depth. A request arriving
-/// with a non-loopback Host (only possible through direct-TCP trickery
-/// on the local machine) should still be rejected.
+/// Secondary regression: `--no-auth` loopback mode (the Origin.app
+/// production shape, fronted by cloudflared) must also accept foreign
+/// Host headers. cloudflared forwards the public tunnel hostname to
+/// 127.0.0.1:PORT regardless of whether auth is configured — this was
+/// the real-world miss in the first fix, which only disabled
+/// allowed_hosts when a token was set.
 #[tokio::test]
-async fn test_no_auth_mode_keeps_allowed_hosts_restriction() {
+async fn test_no_auth_mode_also_allows_tunneled_host() {
     let port = portpicker::pick_unused_port().expect("no free port");
     let config = test_config(port, None);
 
@@ -199,23 +201,25 @@ async fn test_no_auth_mode_keeps_allowed_hosts_restriction() {
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("http://127.0.0.1:{}/mcp", port))
-        .header("Host", "rebinding-attacker.example.com")
+        .header("Host", "my-tunnel.trycloudflare.com")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")
-        .body("{}")
+        .body(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#,
+        )
         .send()
         .await
         .unwrap();
 
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    assert_eq!(
+    assert_ne!(
         status, 403,
-        "--no-auth loopback mode must keep rmcp's Host restriction; got {status} {body}"
+        "--no-auth + tunneled Host must not be rejected; got {status} {body}"
     );
     assert!(
-        body.contains("Host header is not allowed"),
-        "response must be the rmcp DNS-rebinding reject body; got: {body}"
+        !body.contains("Host header is not allowed"),
+        "response must not be the rmcp DNS-rebinding reject body; got: {body}"
     );
 
     handle.abort();

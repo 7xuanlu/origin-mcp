@@ -42,20 +42,20 @@ pub async fn run_serve(config: ServeConfig) -> anyhow::Result<()> {
     let token = config.token.clone();
     let allowed_origins = config.allowed_origins.clone();
 
-    // rmcp's default allowed_hosts = [localhost, 127.0.0.1, ::1] gives
-    // DNS-rebinding protection for loopback deployments. With auth on,
-    // this server is meant to be reached through a public tunnel whose
-    // Host header is non-loopback; leaving the default in place rejects
-    // every tunneled request with a plain-text 403 the upstream MCP
-    // proxy cannot parse, surfacing as a bogus "-32600 Invalid Request".
-    // Bearer auth plus the CORS Origin allowlist gate access in that
-    // mode. --no-auth (loopback only, enforced in main.rs) keeps the
-    // restriction as defense-in-depth.
-    let mcp_config = if token.is_some() {
-        StreamableHttpServerConfig::default().disable_allowed_hosts()
-    } else {
-        StreamableHttpServerConfig::default()
-    };
+    // rmcp's default allowed_hosts = [localhost, 127.0.0.1, ::1] is
+    // DNS-rebinding protection for loopback deployments. Every serve
+    // deployment we support is reached through a public tunnel
+    // (cloudflared, ngrok) that forwards the tunnel hostname in Host,
+    // whether or not a bearer token is used (Origin.app runs `serve
+    // --no-auth --host 127.0.0.1` and fronts it with cloudflared; auth
+    // deployments do the same with a token). Leaving the default in
+    // place rejects every tunneled request with a plain-text 403 the
+    // upstream MCP proxy cannot parse, surfacing to users as a bogus
+    // "-32600 Invalid Request". MCP's custom-header requirement
+    // already triggers CORS preflight, so the Origin allowlist catches
+    // browser-driven DNS rebinding; a local non-browser attacker
+    // bypasses Host checking anyway by hitting 127.0.0.1 directly.
+    let mcp_config = StreamableHttpServerConfig::default().disable_allowed_hosts();
 
     let mcp_service = StreamableHttpService::new(
         move || {
