@@ -10,7 +10,8 @@ use rmcp::{transport::stdio, ServiceExt};
 #[derive(Parser)]
 #[command(
     name = "origin-mcp",
-    about = "MCP server for Origin — personal agent memory layer"
+    about = "MCP server for Origin — personal agent memory layer",
+    version
 )]
 struct Cli {
     #[command(subcommand)]
