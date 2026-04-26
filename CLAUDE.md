@@ -73,6 +73,19 @@ This repo owns all origin-mcp distribution. The Origin repo does NOT publish ori
 2. Commit, tag `vX.Y.Z`, push tag
 3. Release workflow builds, creates GitHub release, publishes to all channels
 
+### Release gotchas
+
+- **npm Trusted Publishing requires Node 24+.** The publish-npm job uses Node 24 because npm's OIDC handshake requires npm CLI 11.5.1+. Node 20 and 22 ship npm v10 which signs provenance (Sigstore) but fails the OIDC auth exchange with a misleading E404 (npm/cli#9088). Do not downgrade below Node 24.
+- **SSH push may fail from CI or local.** If `git push origin` fails with SSH key errors, use HTTPS: `git push https://github.com/7xuanlu/origin-mcp.git main`
+- **Re-tagging a failed release.** Delete the old tag locally and remotely, then re-tag on the fixed commit:
+  ```bash
+  git tag -d vX.Y.Z
+  git push origin :refs/tags/vX.Y.Z
+  git tag vX.Y.Z
+  git push origin vX.Y.Z
+  ```
+  The GitHub Release from the previous run persists (build artifacts are fine if the build job succeeded). Only the publish jobs re-run.
+
 ### Platforms
 
 - **darwin-arm64** (macOS Apple Silicon): primary target
