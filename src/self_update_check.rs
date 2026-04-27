@@ -131,8 +131,8 @@ mod tests {
     static CACHE_LOCK: Mutex<()> = Mutex::new(());
 
     fn set_temp_cache(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("origin-mcp-test-{label}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("origin-mcp-test-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("ORIGIN_MCP_CACHE_DIR", &dir);
         dir
