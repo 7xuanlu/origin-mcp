@@ -11,7 +11,12 @@ pub enum VersionStatus {
 /// (release-please bumps patches frequently and they're API-compatible).
 /// Unparseable daemon versions are treated as Compatible (handshake never blocks).
 pub fn compare(mcp_version: &str, daemon_version: &str) -> VersionStatus {
-    let mcp = Version::parse(mcp_version).expect("mcp version is CARGO_PKG_VERSION");
+    // Defensive on both sides: if either version fails to parse, fall back to
+    // Compatible. Never panic at startup over a malformed version string.
+    let mcp = match Version::parse(mcp_version) {
+        Ok(v) => v,
+        Err(_) => return VersionStatus::Compatible,
+    };
     let daemon = match Version::parse(daemon_version) {
         Ok(v) => v,
         Err(_) => return VersionStatus::Compatible,

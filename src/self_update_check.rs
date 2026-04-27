@@ -1,10 +1,18 @@
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
 const RELEASES_URL: &str = "https://api.github.com/repos/7xuanlu/origin-mcp/releases/latest";
+
+/// Process-wide in-memory fallback for environments where on-disk cache writes
+/// fail (locked-down sandboxes, missing dirs::cache_dir, etc). Without this,
+/// `store_cache` would silently no-op and every invocation in the same
+/// long-lived process (e.g. an MCP server hosting many sessions) would re-hit
+/// the GitHub API, risking the 60-req/hr unauthenticated rate limit.
+static MEMORY_FALLBACK: Mutex<Option<CacheEntry>> = Mutex::new(None);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct CacheEntry {
@@ -30,11 +38,20 @@ fn now_secs() -> u64 {
 }
 
 fn load_cache() -> Option<CacheEntry> {
-    let path = cache_path()?;
-    let bytes = std::fs::read(&path).ok()?;
-    let entry: CacheEntry = serde_json::from_slice(&bytes).ok()?;
+    if let Some(path) = cache_path() {
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(entry) = serde_json::from_slice::<CacheEntry>(&bytes) {
+                if now_secs().saturating_sub(entry.checked_at_secs) < CACHE_TTL.as_secs() {
+                    return Some(entry);
+                }
+            }
+        }
+    }
+    // Fall back to the in-memory cache if disk read failed or was stale.
+    let guard = MEMORY_FALLBACK.lock().ok()?;
+    let entry = guard.as_ref()?;
     if now_secs().saturating_sub(entry.checked_at_secs) < CACHE_TTL.as_secs() {
-        Some(entry)
+        Some(entry.clone())
     } else {
         None
     }
@@ -43,8 +60,14 @@ fn load_cache() -> Option<CacheEntry> {
 fn store_cache(entry: &CacheEntry) {
     if let Some(path) = cache_path() {
         if let Ok(bytes) = serde_json::to_vec(entry) {
-            let _ = std::fs::write(path, bytes);
+            if std::fs::write(&path, bytes).is_ok() {
+                return;
+            }
         }
+    }
+    // Disk write failed (no cache_dir, read-only FS, etc) — fall back to memory.
+    if let Ok(mut guard) = MEMORY_FALLBACK.lock() {
+        *guard = Some(entry.clone());
     }
 }
 
