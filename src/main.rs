@@ -123,7 +123,7 @@ async fn run_stdio(origin_url: Option<String>) -> anyhow::Result<()> {
     tokio::spawn(async {
         if let Some(msg) = origin_mcp::self_update_check::check().await {
             tracing::info!("{msg}");
-            eprintln!("ℹ {msg}");
+            eprintln!("Note: {msg}");
         }
     });
 
@@ -174,7 +174,7 @@ async fn run_serve(args: ServeArgs, origin_url: Option<String>) -> anyhow::Resul
     tokio::spawn(async {
         if let Some(msg) = origin_mcp::self_update_check::check().await {
             tracing::info!("{msg}");
-            eprintln!("ℹ {msg}");
+            eprintln!("Note: {msg}");
         }
     });
 

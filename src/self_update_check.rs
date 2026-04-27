@@ -13,9 +13,13 @@ struct CacheEntry {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let dir = dirs::cache_dir()?.join("origin-mcp");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("version-check.json"))
+    // ORIGIN_MCP_CACHE_DIR override exists so tests can point at a temp dir
+    // instead of polluting the user's real cache (~/Library/Caches/origin-mcp/...).
+    let base = std::env::var_os("ORIGIN_MCP_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::cache_dir().map(|d| d.join("origin-mcp")))?;
+    std::fs::create_dir_all(&base).ok()?;
+    Some(base.join("version-check.json"))
 }
 
 fn now_secs() -> u64 {
@@ -94,20 +98,40 @@ pub async fn check() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serialize tests that read/write the shared on-disk cache to prevent races.
-    static CACHE_LOCK: Mutex<()> = Mutex::new(());
+    /// Per-test cache override: each test gets its own temp dir, so they can
+    /// run in parallel without sharing state and without writing to the user's
+    /// real cache.
+    struct CacheDirGuard {
+        _dir: PathBuf,
+    }
+    impl CacheDirGuard {
+        fn new(label: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("origin-mcp-test-{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::env::set_var("ORIGIN_MCP_CACHE_DIR", &dir);
+            Self { _dir: dir }
+        }
+    }
+    impl Drop for CacheDirGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
+            let _ = std::fs::remove_dir_all(&self._dir);
+        }
+    }
 
     #[test]
     fn cache_path_under_user_cache_dir() {
+        // No override → falls back to dirs::cache_dir().
+        std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
         let p = cache_path().expect("cache dir should resolve on this platform");
         assert!(p.ends_with("origin-mcp/version-check.json"), "got {p:?}");
     }
 
     #[test]
     fn cache_round_trip_within_ttl() {
-        let _guard = CACHE_LOCK.lock().unwrap();
+        let _g = CacheDirGuard::new("round-trip");
         let entry = CacheEntry {
             latest_tag: "9.9.9".to_string(),
             checked_at_secs: now_secs(),
@@ -119,7 +143,7 @@ mod tests {
 
     #[test]
     fn cache_expires_after_ttl() {
-        let _guard = CACHE_LOCK.lock().unwrap();
+        let _g = CacheDirGuard::new("expires");
         let entry = CacheEntry {
             latest_tag: "9.9.9".to_string(),
             checked_at_secs: now_secs().saturating_sub(CACHE_TTL.as_secs() + 60),
