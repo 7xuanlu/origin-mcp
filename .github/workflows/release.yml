@@ -115,14 +115,14 @@ jobs:
           class OriginMcp < Formula
             desc "MCP server for Origin — personal agent memory layer"
             homepage "https://github.com/7xuanlu/origin-mcp"
+            url "https://github.com/7xuanlu/origin-mcp/releases/download/v#{version}/origin-mcp-darwin-arm64.tar.gz"
             version "${VERSION}"
+            sha256 "${SHA_DARWIN_ARM64}"
             license "MIT"
 
-            on_macos do
-              on_arm do
-                url "https://github.com/7xuanlu/origin-mcp/releases/download/v#{version}/origin-mcp-darwin-arm64.tar.gz"
-                sha256 "${SHA_DARWIN_ARM64}"
-              end
+            livecheck do
+              url :homepage
+              strategy :github_latest
             end
 
             on_linux do
