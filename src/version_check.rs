@@ -1,0 +1,65 @@
+use semver::Version;
+
+#[derive(Debug, PartialEq)]
+pub enum VersionStatus {
+    Compatible,
+    McpOutdated { mcp: Version, daemon: Version },
+}
+
+/// Compare origin-mcp's compiled version against the daemon's reported version.
+/// Treats minor/major drift as `McpOutdated`. Patch differences are ignored
+/// (release-please bumps patches frequently and they're API-compatible).
+/// Unparseable daemon versions are treated as Compatible (handshake never blocks).
+pub fn compare(mcp_version: &str, daemon_version: &str) -> VersionStatus {
+    let mcp = Version::parse(mcp_version).expect("mcp version is CARGO_PKG_VERSION");
+    let daemon = match Version::parse(daemon_version) {
+        Ok(v) => v,
+        Err(_) => return VersionStatus::Compatible,
+    };
+    if daemon.major > mcp.major || (daemon.major == mcp.major && daemon.minor > mcp.minor) {
+        VersionStatus::McpOutdated { mcp, daemon }
+    } else {
+        VersionStatus::Compatible
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_versions_compatible() {
+        assert_eq!(compare("0.1.2", "0.1.2"), VersionStatus::Compatible);
+    }
+
+    #[test]
+    fn mcp_ahead_compatible() {
+        assert_eq!(compare("0.2.0", "0.1.5"), VersionStatus::Compatible);
+    }
+
+    #[test]
+    fn daemon_minor_ahead_outdated() {
+        assert!(matches!(
+            compare("0.1.2", "0.2.0"),
+            VersionStatus::McpOutdated { .. }
+        ));
+    }
+
+    #[test]
+    fn daemon_major_ahead_outdated() {
+        assert!(matches!(
+            compare("0.1.2", "1.0.0"),
+            VersionStatus::McpOutdated { .. }
+        ));
+    }
+
+    #[test]
+    fn patch_drift_compatible() {
+        assert_eq!(compare("0.1.2", "0.1.5"), VersionStatus::Compatible);
+    }
+
+    #[test]
+    fn unparseable_daemon_version_compatible() {
+        assert_eq!(compare("0.1.2", "garbage"), VersionStatus::Compatible);
+    }
+}
