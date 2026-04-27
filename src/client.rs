@@ -128,7 +128,16 @@ impl OriginClient {
         use crate::version_check::{compare, VersionStatus};
 
         let url = format!("{}/api/health", self.base_url);
-        let resp = self.client.get(&url).send().await.ok()?;
+        // Bypass send_with_retry: a 6s retry loop at startup against a missing
+        // or hung daemon would be worse UX than a silent skip. 2s timeout bounds
+        // the worst case where the daemon socket accepts but the handler stalls.
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .ok()?;
         let body: serde_json::Value = resp.json().await.ok()?;
         let daemon_version = body["version"].as_str()?;
         let mcp_version = env!("CARGO_PKG_VERSION");
