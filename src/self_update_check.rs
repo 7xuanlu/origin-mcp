@@ -98,32 +98,27 @@ pub async fn check() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    /// Per-test cache override: each test gets its own temp dir, so they can
-    /// run in parallel without sharing state and without writing to the user's
-    /// real cache.
-    struct CacheDirGuard {
-        _dir: PathBuf,
-    }
-    impl CacheDirGuard {
-        fn new(label: &str) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("origin-mcp-test-{label}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::env::set_var("ORIGIN_MCP_CACHE_DIR", &dir);
-            Self { _dir: dir }
-        }
-    }
-    impl Drop for CacheDirGuard {
-        fn drop(&mut self) {
-            std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
-            let _ = std::fs::remove_dir_all(&self._dir);
-        }
+    /// Tests touch process-wide state (`ORIGIN_MCP_CACHE_DIR` env var + the
+    /// resulting on-disk cache file). Cargo runs tests in parallel by default,
+    /// so we serialize the disk-touching tests through this lock. The env
+    /// override is per-test (set inside the lock) so each disk-test gets its
+    /// own temp dir — no pollution of the user's real cache.
+    static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_temp_cache(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("origin-mcp-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("ORIGIN_MCP_CACHE_DIR", &dir);
+        dir
     }
 
     #[test]
     fn cache_path_under_user_cache_dir() {
         // No override → falls back to dirs::cache_dir().
+        let _g = CACHE_LOCK.lock().unwrap();
         std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
         let p = cache_path().expect("cache dir should resolve on this platform");
         assert!(p.ends_with("origin-mcp/version-check.json"), "got {p:?}");
@@ -131,7 +126,8 @@ mod tests {
 
     #[test]
     fn cache_round_trip_within_ttl() {
-        let _g = CacheDirGuard::new("round-trip");
+        let _g = CACHE_LOCK.lock().unwrap();
+        let dir = set_temp_cache("round-trip");
         let entry = CacheEntry {
             latest_tag: "9.9.9".to_string(),
             checked_at_secs: now_secs(),
@@ -139,11 +135,14 @@ mod tests {
         store_cache(&entry);
         let loaded = load_cache().expect("cache should load");
         assert_eq!(loaded.latest_tag, "9.9.9");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
     }
 
     #[test]
     fn cache_expires_after_ttl() {
-        let _g = CacheDirGuard::new("expires");
+        let _g = CACHE_LOCK.lock().unwrap();
+        let dir = set_temp_cache("expires");
         let entry = CacheEntry {
             latest_tag: "9.9.9".to_string(),
             checked_at_secs: now_secs().saturating_sub(CACHE_TTL.as_secs() + 60),
@@ -153,5 +152,7 @@ mod tests {
             load_cache().is_none(),
             "expired entry should not be returned"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::remove_var("ORIGIN_MCP_CACHE_DIR");
     }
 }
