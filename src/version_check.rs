@@ -62,4 +62,21 @@ mod tests {
     fn unparseable_daemon_version_compatible() {
         assert_eq!(compare("0.1.2", "garbage"), VersionStatus::Compatible);
     }
+
+    #[test]
+    fn build_metadata_ignored_in_ordering() {
+        // SemVer 2.0.0: build metadata after `+` is ignored when ordering versions.
+        assert_eq!(compare("0.1.2", "0.1.2+abc"), VersionStatus::Compatible);
+    }
+
+    #[test]
+    fn prerelease_daemon_same_minor_compatible() {
+        // Daemon on a 0.2.0 pre-release while MCP is on stable 0.2.0:
+        // same major+minor → Compatible. Our gate is major/minor-only;
+        // semver pre-release ordering is irrelevant at that granularity.
+        assert_eq!(
+            compare("0.2.0", "0.2.0-beta.1"),
+            VersionStatus::Compatible
+        );
+    }
 }
