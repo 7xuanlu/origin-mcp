@@ -284,3 +284,50 @@ fn test_config(port: u16, token: Option<String>) -> origin_mcp::serve::ServeConf
         allowed_origins: vec!["*".into()],
     }
 }
+
+#[tokio::test]
+async fn version_handshake_warns_when_daemon_minor_ahead() {
+    use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
+
+    let mock_daemon = MockServer::start().await;
+    Mock::given(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "ok",
+            "db_initialized": true,
+            "version": "9.9.9"
+        })))
+        .mount(&mock_daemon)
+        .await;
+
+    let client = origin_mcp::client::OriginClient::new(mock_daemon.uri());
+    let warning = client.version_handshake().await;
+    assert!(warning.is_some(), "expected a warning when daemon ahead");
+    let msg = warning.unwrap();
+    assert!(msg.contains("origin-mcp"), "msg={msg}");
+    assert!(msg.contains("brew upgrade origin-mcp"), "msg={msg}");
+}
+
+#[tokio::test]
+async fn version_handshake_silent_when_compatible() {
+    use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
+
+    let mock_daemon = MockServer::start().await;
+    Mock::given(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "ok",
+            "db_initialized": true,
+            "version": env!("CARGO_PKG_VERSION")
+        })))
+        .mount(&mock_daemon)
+        .await;
+
+    let client = origin_mcp::client::OriginClient::new(mock_daemon.uri());
+    assert_eq!(client.version_handshake().await, None);
+}
+
+#[tokio::test]
+async fn version_handshake_silent_when_daemon_unreachable() {
+    let port = portpicker::pick_unused_port().expect("no free port");
+    let client = origin_mcp::client::OriginClient::new(format!("http://127.0.0.1:{port}"));
+    assert_eq!(client.version_handshake().await, None);
+}

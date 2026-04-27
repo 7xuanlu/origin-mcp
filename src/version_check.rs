@@ -74,9 +74,6 @@ mod tests {
         // Daemon on a 0.2.0 pre-release while MCP is on stable 0.2.0:
         // same major+minor → Compatible. Our gate is major/minor-only;
         // semver pre-release ordering is irrelevant at that granularity.
-        assert_eq!(
-            compare("0.2.0", "0.2.0-beta.1"),
-            VersionStatus::Compatible
-        );
+        assert_eq!(compare("0.2.0", "0.2.0-beta.1"), VersionStatus::Compatible);
     }
 }
