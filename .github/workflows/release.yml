@@ -131,7 +131,12 @@ jobs:
               strategy :github_latest
             end
 
+            on_macos do
+              depends_on arch: :arm64
+            end
+
             on_linux do
+              depends_on arch: :x86_64
               on_intel do
                 url "https://github.com/7xuanlu/origin-mcp/releases/download/v${VERSION}/origin-mcp-linux-x64.tar.gz"
                 sha256 "${SHA_LINUX_X64}"
