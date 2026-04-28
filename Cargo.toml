@@ -35,6 +35,7 @@ subtle = "2"
 http = "1"
 tokio-util = "0.7"
 dirs = "6"
+semver = "1"
 origin-types = "0.1"
 
 [dev-dependencies]

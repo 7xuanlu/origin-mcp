@@ -114,6 +114,19 @@ async fn run_stdio(origin_url: Option<String>) -> anyhow::Result<()> {
     tracing::info!("Connecting to Origin at {}", base_url);
 
     let client = OriginClient::new(base_url);
+
+    if let Some(msg) = client.version_handshake().await {
+        tracing::warn!("{msg}");
+        eprintln!("Warning: {msg}");
+    }
+
+    tokio::spawn(async {
+        if let Some(msg) = origin_mcp::self_update_check::check().await {
+            tracing::info!("{msg}");
+            eprintln!("Note: {msg}");
+        }
+    });
+
     let server = OriginMcpServer::new(client, TransportMode::Stdio, "claude-code".into(), None);
     let service = server
         .serve(stdio())
@@ -149,6 +162,21 @@ async fn run_serve(args: ServeArgs, origin_url: Option<String>) -> anyhow::Resul
 
     let base_url = discover_origin_url(origin_url);
     tracing::info!("Connecting to Origin at {}", base_url);
+
+    if let Some(msg) = OriginClient::new(base_url.clone())
+        .version_handshake()
+        .await
+    {
+        tracing::warn!("{msg}");
+        eprintln!("Warning: {msg}");
+    }
+
+    tokio::spawn(async {
+        if let Some(msg) = origin_mcp::self_update_check::check().await {
+            tracing::info!("{msg}");
+            eprintln!("Note: {msg}");
+        }
+    });
 
     let allowed_origins: Vec<String> = args
         .allowed_origins

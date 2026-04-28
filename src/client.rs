@@ -119,6 +119,37 @@ impl OriginClient {
         let bytes = Self::read_body(resp).await?;
         Self::parse_response(&bytes)
     }
+
+    /// Query the daemon's /api/health, compare versions, and return a
+    /// human-readable warning if origin-mcp is older than the daemon's minor.
+    /// Returns None if compatible OR if the daemon is unreachable / response
+    /// can't be parsed (handshake never blocks startup).
+    pub async fn version_handshake(&self) -> Option<String> {
+        use crate::version_check::{compare, VersionStatus};
+
+        let url = format!("{}/api/health", self.base_url);
+        // Bypass send_with_retry: a 6s retry loop at startup against a missing
+        // or hung daemon would be worse UX than a silent skip. 2s timeout bounds
+        // the worst case where the daemon socket accepts but the handler stalls.
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .ok()?;
+        let body: serde_json::Value = resp.json().await.ok()?;
+        let daemon_version = body["version"].as_str()?;
+        let mcp_version = env!("CARGO_PKG_VERSION");
+
+        match compare(mcp_version, daemon_version) {
+            VersionStatus::Compatible => None,
+            VersionStatus::McpOutdated { mcp, daemon } => Some(format!(
+                "Your origin-mcp v{mcp} is older than the daemon v{daemon}. \
+                 Run `brew upgrade origin-mcp` (or `npm update -g origin-mcp`)."
+            )),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
