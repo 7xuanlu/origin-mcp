@@ -111,18 +111,24 @@ jobs:
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/7xuanlu/homebrew-tap.git tap
           mkdir -p tap/Formula
 
+          # WARNING: the HEREDOC body below is indented with EXACTLY 10 spaces
+          # (YAML's 8 + Ruby's 2). The `sed -i 's/^          //'` line at the
+          # bottom of this step strips that exact prefix to produce the formula.
+          # Do NOT run yamllint, Prettier, or any auto-formatter on this file —
+          # changing the indent by even one space breaks formula generation
+          # silently (brew tap will reject the malformed result on next release).
           cat > tap/Formula/origin-mcp.rb << FORMULA
           class OriginMcp < Formula
             desc "MCP server for Origin — personal agent memory layer"
             homepage "https://github.com/7xuanlu/origin-mcp"
+            url "https://github.com/7xuanlu/origin-mcp/releases/download/v#{version}/origin-mcp-darwin-arm64.tar.gz"
             version "${VERSION}"
+            sha256 "${SHA_DARWIN_ARM64}"
             license "MIT"
 
-            on_macos do
-              on_arm do
-                url "https://github.com/7xuanlu/origin-mcp/releases/download/v#{version}/origin-mcp-darwin-arm64.tar.gz"
-                sha256 "${SHA_DARWIN_ARM64}"
-              end
+            livecheck do
+              url :homepage
+              strategy :github_latest
             end
 
             on_linux do
