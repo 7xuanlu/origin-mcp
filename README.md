@@ -1,8 +1,10 @@
 # origin-mcp
 
-MCP server for [Origin](https://github.com/7xuanlu/origin). Persistent memory for AI work.
+MCP connector for [Origin](https://github.com/7xuanlu/origin).
 
-Origin is a local-first companion for people who work with AI every day. Chats, projects, and decisions become connected, deduplicated, and editable. `origin-mcp` is the connector: it lets any MCP-compatible tool read and write to your local Origin through the [Model Context Protocol](https://modelcontextprotocol.io).
+[Origin](https://useorigin.app) runs quietly behind the AI tools you already use. It gives your AI a place to carry decisions, lessons, gotchas, and project context instead of rediscovering them in every new chat.
+
+`origin-mcp` lets Claude Code, Cursor, Codex, Claude Desktop, Windsurf, Gemini CLI, and other MCP clients read and write to your local Origin runtime through the [Model Context Protocol](https://modelcontextprotocol.io). The daemon owns storage, search, embeddings, and background refinement. This repo is only the MCP connector.
 
 ## Install
 
@@ -23,8 +25,7 @@ Or install the binary directly:
 
 ```bash
 # Via Homebrew
-brew tap 7xuanlu/tap
-brew install origin-mcp
+brew install 7xuanlu/tap/origin-mcp
 
 # Via cargo
 cargo install origin-mcp
@@ -44,7 +45,7 @@ Then add the binary path to your MCP config:
 
 ## How it works
 
-`origin-mcp` connects to the Origin daemon running on `127.0.0.1:7878`. The daemon owns storage, search, embeddings, and refinement. This repo is only the MCP connector.
+`origin-mcp` connects to the Origin daemon running on `127.0.0.1:7878`.
 
 ```
 Claude Code / Cursor / Claude Desktop
@@ -71,15 +72,28 @@ origin install
 origin status
 ```
 
-## Tools
+Setup has three paths:
+
+- **Basic Memory:** store, search, and recall immediately. No model download or API key.
+- **On-device Model:** private local extraction and background refinement after model download.
+- **Anthropic Key:** richer extraction and background refinement using your API key.
+
+## Memory tools
 
 | Tool | What it does | Annotations |
 |------|-------------|-------------|
 | `remember` | Store a memory, fact, preference, or decision. The backend auto-classifies type, extracts entities, and links to the knowledge graph. | write, non-destructive |
 | `recall` | Search memories and knowledge graph by natural language. Returns ranked results with source tracing. | read-only |
 | `context` | Load session context: identity, preferences, goals, and topic-relevant memories. Call this at session start. | read-only |
-| `origin_status` | Check daemon reachability, setup mode, Anthropic key state, and local model state. | read-only |
 | `forget` | Delete a specific memory and clean up entity links. Requires the memory ID. | destructive, idempotent |
+
+## Diagnostic tool
+
+| Tool | What it does | Annotations |
+|------|-------------|-------------|
+| `doctor` | Check daemon reachability, setup mode, Anthropic key state, and on-device model state. | read-only |
+
+`doctor` matches the `origin doctor` CLI command. It is not part of the memory loop. It exists so an MCP client can explain setup and refinement problems without guessing.
 
 ### What agents should know
 
@@ -101,9 +115,9 @@ See [`src/tools.rs`](src/tools.rs) for the full `with_instructions` text that ag
 
 ## What Origin does with your memories
 
-Origin works in Basic Memory mode without a local model or API key: storage, search, recall, and MCP memory are available immediately.
+Origin works in Basic Memory mode without an on-device model or API key: storage, search, recall, and MCP memory are available immediately.
 
-When the user opts into a local model or Anthropic key, Origin can refine memories over time:
+When the user opts into an on-device model or Anthropic key, Origin can refine memories over time:
 
 - **Deduplication.** Overlapping memories are merged automatically.
 - **Concept distillation.** Related memories are clustered into concepts: compact, wiki-style summaries that save tokens on retrieval.
