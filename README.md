@@ -1,8 +1,8 @@
 # origin-mcp
 
-MCP server for [Origin](https://github.com/7xuanlu/origin). Persistent memory across Claude, ChatGPT, and Cursor.
+MCP server for [Origin](https://github.com/7xuanlu/origin). Persistent memory for AI work.
 
-Origin is a local-first companion for people who work with AI every day. Conversations across tools become connected, deduplicated, and editable. `origin-mcp` is the bridge: it lets any MCP-compatible tool read and write to your shared memory through the [Model Context Protocol](https://modelcontextprotocol.io).
+Origin is a local-first companion for people who work with AI every day. Chats, projects, and decisions become connected, deduplicated, and editable. `origin-mcp` is the connector: it lets any MCP-compatible tool read and write to your local Origin through the [Model Context Protocol](https://modelcontextprotocol.io).
 
 ## Install
 
@@ -44,7 +44,7 @@ Then add the binary path to your MCP config:
 
 ## How it works
 
-`origin-mcp` connects to the Origin daemon running on `127.0.0.1:7878`. The daemon owns all storage, embeddings, and refinement. This server is a thin MCP interface to it.
+`origin-mcp` connects to the Origin daemon running on `127.0.0.1:7878`. The daemon owns storage, search, embeddings, and refinement. This repo is only the MCP connector.
 
 ```
 Claude Code / Cursor / Claude Desktop
@@ -55,13 +55,21 @@ origin-mcp
     |
     | HTTP
     v
-Origin daemon (origin-server)
+Origin runtime
     |
     v
 Local SQLite + embeddings + knowledge graph
 ```
 
-If the daemon isn't running, `npx origin-mcp` starts it automatically.
+If the daemon is not running, `origin-mcp` returns an actionable setup message. Install the Origin desktop app, or install the headless runtime:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/7xuanlu/origin/main/install.sh | bash
+export PATH="$HOME/.origin/bin:$PATH"
+origin setup
+origin install
+origin status
+```
 
 ## Tools
 
@@ -70,6 +78,7 @@ If the daemon isn't running, `npx origin-mcp` starts it automatically.
 | `remember` | Store a memory, fact, preference, or decision. The backend auto-classifies type, extracts entities, and links to the knowledge graph. | write, non-destructive |
 | `recall` | Search memories and knowledge graph by natural language. Returns ranked results with source tracing. | read-only |
 | `context` | Load session context: identity, preferences, goals, and topic-relevant memories. Call this at session start. | read-only |
+| `origin_status` | Check daemon reachability, setup mode, Anthropic key state, and local model state. | read-only |
 | `forget` | Delete a specific memory and clean up entity links. Requires the memory ID. | destructive, idempotent |
 
 ### What agents should know
@@ -92,7 +101,9 @@ See [`src/tools.rs`](src/tools.rs) for the full `with_instructions` text that ag
 
 ## What Origin does with your memories
 
-Origin doesn't just store what agents send. A background engine refines memories over time:
+Origin works in Basic Memory mode without a local model or API key: storage, search, recall, and MCP memory are available immediately.
+
+When the user opts into a local model or Anthropic key, Origin can refine memories over time:
 
 - **Deduplication.** Overlapping memories are merged automatically.
 - **Concept distillation.** Related memories are clustered into concepts: compact, wiki-style summaries that save tokens on retrieval.
@@ -103,7 +114,7 @@ The longer you use it, the better the retrieval gets.
 
 ## Requirements
 
-- **Origin daemon** running locally (via the desktop app or `origin-server install`)
+- **Origin runtime** running locally (via the desktop app or `origin setup` / `origin install`)
 - **macOS Apple Silicon** (M1+) at v0.1.0. Linux x64 binaries are built but not yet tested in production.
 
 ## License

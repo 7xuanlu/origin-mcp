@@ -150,6 +150,18 @@ fn format_remember_success(resp: &StoreMemoryResponse) -> String {
     msg
 }
 
+fn daemon_setup_hint() -> &'static str {
+    "Install the Origin desktop app, or install the headless runtime and run `origin setup`.
+
+Desktop: https://github.com/7xuanlu/origin/releases/latest
+Headless:
+  curl -fsSL https://raw.githubusercontent.com/7xuanlu/origin/main/install.sh | bash
+  export PATH=\"$HOME/.origin/bin:$PATH\"
+  origin setup
+  origin install
+  origin status"
+}
+
 /// Convert a backend error into a tool-level error result (isError: true)
 /// with an actionable message. This keeps the MCP transport healthy
 /// (no protocol-level McpError) while telling the caller what happened.
@@ -157,7 +169,8 @@ fn tool_error(e: OriginError, verb: &str) -> CallToolResult {
     let msg = match &e {
         OriginError::Unreachable(_) => format!(
             "Origin daemon is not reachable (retried 3x over ~6s). \
-             The {verb} was NOT completed. Try again after the daemon is running."
+             The {verb} was NOT completed.\n\n{}",
+            daemon_setup_hint()
         ),
         OriginError::Api { status, body } => format!(
             "Origin daemon returned HTTP {status}: {body}. The {verb} may not have completed."
@@ -292,6 +305,95 @@ impl OriginMcpServer {
         }
     }
 
+    pub async fn origin_status_impl(&self) -> Result<CallToolResult, McpError> {
+        let status: serde_json::Value = match self.client.get("/api/setup/status").await {
+            Ok(r) => r,
+            Err(OriginError::Api { status: 404, .. }) => {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    "Origin daemon is running, but it does not expose /api/setup/status. \
+                     Update Origin, then run `origin doctor`."
+                        .to_string(),
+                )]));
+            }
+            Err(e) => return Ok(tool_error(e, "status check")),
+        };
+
+        let mode = status
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let setup_completed = status
+            .get("setup_completed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let anthropic_key_configured = status
+            .get("anthropic_key_configured")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let local_model_selected = status.get("local_model_selected").and_then(|v| v.as_str());
+        let local_model_loaded = status.get("local_model_loaded").and_then(|v| v.as_str());
+        let local_model_cached = status
+            .get("local_model_cached")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mode_label = match mode {
+            "basic-memory" => "Basic Memory",
+            "local-model" => "Local Model",
+            "anthropic-key" => "Anthropic Key",
+            other => other,
+        };
+        let local_model_line = match local_model_selected {
+            Some(id) => {
+                let mut line = format!(
+                    "{id} ({})",
+                    if local_model_cached {
+                        "downloaded"
+                    } else {
+                        "not downloaded"
+                    }
+                );
+                if Some(id) == local_model_loaded {
+                    line.push_str(", loaded");
+                }
+                line
+            }
+            None => "not selected".to_string(),
+        };
+        let refinement_line = if anthropic_key_configured || local_model_loaded.is_some() {
+            "ready for richer extraction and background refinement"
+        } else {
+            "limited until you choose a local model or Anthropic key"
+        };
+
+        let mut msg = format!(
+            "Origin daemon: running\n\
+             Setup: {}\n\
+             Mode: {mode_label}\n\
+             Anthropic key: {}\n\
+             Local model: {local_model_line}\n\
+             Refinery: {refinement_line}",
+            if setup_completed {
+                "completed"
+            } else {
+                "not completed"
+            },
+            if anthropic_key_configured {
+                "configured"
+            } else {
+                "not configured"
+            }
+        );
+
+        if !setup_completed {
+            msg.push_str("\n\nRun `origin setup` to choose Basic Memory, a local model, or an Anthropic key.");
+        } else if !anthropic_key_configured && local_model_loaded.is_none() {
+            msg.push_str("\n\nBasic Memory works now. For richer extraction, run `origin model install` or `origin key set anthropic`.");
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(msg)]))
+    }
+
     pub async fn forget_impl(&self, memory_id: &str) -> Result<CallToolResult, McpError> {
         if self.transport == TransportMode::Http {
             return Ok(CallToolResult::error(vec![Content::text(
@@ -380,6 +482,18 @@ impl OriginMcpServer {
         Parameters(params): Parameters<ContextParams>,
     ) -> Result<CallToolResult, McpError> {
         self.context_impl(params).await
+    }
+
+    #[tool(
+        description = "Check whether the local Origin daemon is reachable, whether setup is complete, and whether Basic Memory, a local model, or an Anthropic key is active. Use when Origin tools fail, when onboarding a new MCP client, or when the user asks why refinement or extraction is limited.",
+        annotations(
+            title = "Origin Status",
+            read_only_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn origin_status(&self) -> Result<CallToolResult, McpError> {
+        self.origin_status_impl().await
     }
 
     #[tool(
@@ -1497,6 +1611,18 @@ mod tests {
         assert!(
             ctx.contains("how the user thinks"),
             "context description must frame the result as modeling how the user thinks, got: {ctx}"
+        );
+    }
+
+    #[test]
+    fn origin_status_description_mentions_setup_mode() {
+        let descriptions = tool_descriptions();
+        let status = descriptions
+            .get("origin_status")
+            .expect("origin_status tool exists");
+        assert!(
+            status.contains("Basic Memory"),
+            "origin_status description must mention setup modes, got: {status}"
         );
     }
 
