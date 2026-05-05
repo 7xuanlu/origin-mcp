@@ -103,6 +103,10 @@ async fn t1_remember_roundtrip() {
         quality: None,
         warnings: vec![],
         extraction_method: "none".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -144,6 +148,10 @@ async fn t2_remember_surfaces_warnings_when_present() {
         quality: None,
         warnings: vec!["decision memory missing required 'claim' field".into()],
         extraction_method: "agent".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -194,6 +202,10 @@ async fn t3_structured_fields_schema_is_object() {
         quality: None,
         warnings: vec![],
         extraction_method: "agent".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -312,6 +324,10 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
         quality: Some("medium".into()),
         warnings: vec![],
         extraction_method: "llm".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -354,7 +370,7 @@ async fn t6_context_roundtrip_bug_regression() {
             goals: vec![],
         },
         knowledge: KnowledgeContext {
-            concepts: vec![],
+            pages: vec![],
             decisions: vec![],
             relevant_memories: vec![],
             graph_context: vec![],
@@ -405,7 +421,7 @@ async fn t7_context_with_domain() {
             goals: vec![],
         },
         knowledge: KnowledgeContext {
-            concepts: vec![],
+            pages: vec![],
             decisions: vec![],
             relevant_memories: vec![],
             graph_context: vec![],
@@ -528,6 +544,10 @@ async fn t10_remember_request_does_not_contain_user_id() {
         quality: None,
         warnings: vec![],
         extraction_method: "none".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -573,6 +593,10 @@ async fn t11_extraction_method_none_not_in_text() {
         quality: None,
         warnings: vec![],
         extraction_method: "none".into(),
+
+        enrichment: String::new(),
+
+        hint: String::new(),
     };
     Mock::given(method("POST"))
         .and(path("/api/memory/store"))
@@ -636,7 +660,7 @@ async fn t13_context_forward_compat_with_extra_fields() {
                 "another_new_field": {"nested": "object"}
             }],
             "graph_context": [],
-            "concepts": [],
+            "pages": [],
             "decisions": []
         },
         "took_ms": 12.0,
