@@ -820,6 +820,8 @@ mod tests {
             quality: Some("high".into()),
             warnings: vec![],
             extraction_method: "llm".into(),
+            enrichment: String::new(),
+            hint: String::new(),
         };
         let msg = format_remember_success(&resp);
         assert_eq!(msg, "Stored mem_abc");
@@ -838,6 +840,8 @@ mod tests {
             quality: None,
             warnings: vec!["decision memory missing required 'claim' field".into()],
             extraction_method: "agent".into(),
+            enrichment: String::new(),
+            hint: String::new(),
         };
         let msg = format_remember_success(&resp);
         assert!(msg.starts_with("Stored mem_abc"));
@@ -944,7 +948,7 @@ mod tests {
                 "goals": []
             },
             "knowledge": {
-                "concepts": [],
+                "pages": [],
                 "decisions": [],
                 "relevant_memories": [],
                 "graph_context": []
@@ -1497,7 +1501,7 @@ mod tests {
                 "goals": []
             },
             "knowledge": {
-                "concepts": [],
+                "pages": [],
                 "decisions": [],
                 "relevant_memories": [],
                 "graph_context": []
@@ -1528,7 +1532,7 @@ mod tests {
                 "goals": []
             },
             "knowledge": {
-                "concepts": [],
+                "pages": [],
                 "decisions": [],
                 "relevant_memories": [],
                 "graph_context": []

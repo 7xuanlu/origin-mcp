@@ -120,7 +120,7 @@ Origin works in Basic Memory mode without an on-device model or API key: storage
 When the user opts into an on-device model or Anthropic key, Origin can refine memories over time:
 
 - **Deduplication.** Overlapping memories are merged automatically.
-- **Concept distillation.** Related memories are clustered into concepts: compact, wiki-style summaries that save tokens on retrieval.
+- **Page distillation.** Related memories are clustered into pages: compact, wiki-style summaries that save tokens on retrieval.
 - **Knowledge graph.** Entities and relations are extracted and linked, so "Alice leads the deploy refactor" connects Alice, the project, and the decision.
 - **Contradiction detection.** When new information conflicts with existing memories, Origin surfaces it for your review.
 
