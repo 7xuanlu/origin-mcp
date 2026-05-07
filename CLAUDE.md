@@ -2,7 +2,7 @@
 
 ## What this is
 
-`origin-mcp` is the MCP server for [Origin](https://github.com/7xuanlu/origin). It connects AI tools (Claude Code, Cursor, Claude Desktop, ChatGPT, Gemini CLI) to Origin's memory layer via the Model Context Protocol (stdio and Streamable HTTP).
+`origin-mcp` is the MCP server for [Origin](https://github.com/7xuanlu/origin) — Where Personal AI Memory Compounds. It connects AI tools (Claude Code, Cursor, Claude Desktop, ChatGPT, Gemini CLI) to the Origin daemon via the Model Context Protocol (stdio and Streamable HTTP).
 
 This is a separate repo from the main Origin app. It's MIT-licensed, lightweight, and depends only on `origin-types` (Apache-2.0) from crates.io.
 
