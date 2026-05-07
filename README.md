@@ -82,10 +82,14 @@ Setup has three paths:
 
 | Tool | What it does | Annotations |
 |------|-------------|-------------|
-| `remember` | Store a memory, fact, preference, or decision. The backend auto-classifies type, extracts entities, and links to the knowledge graph. | write, non-destructive |
+| `capture` | Capture a memory, fact, preference, decision, lesson, or gotcha. The backend auto-classifies type, extracts entities, and links to the knowledge graph. (Renamed from `remember` in v0.4.) | write, non-destructive |
 | `recall` | Search memories and knowledge graph by natural language. Returns ranked results with source tracing. | read-only |
 | `context` | Load session context: identity, preferences, goals, and topic-relevant memories. Call this at session start. | read-only |
 | `forget` | Delete a specific memory and clean up entity links. Requires the memory ID. | destructive, idempotent |
+| `doctor` | Diagnose the local Origin runtime. Use when tools fail or onboarding a new MCP client. | read-only |
+| `distill` | Trigger Origin's distillation pass. Without `page_id`, runs a full pass; with `page_id`, re-distills that single page. | write, idempotent (added in v0.4) |
+| `list_pending` | List unconfirmed memories pending review. Pairs with `confirm_memory` (accept) and `forget` (reject). | read-only (added in v0.4) |
+| `confirm_memory` | Confirm a pending memory by `source_id`. Used during review to accept a captured memory. | write, idempotent (added in v0.4) |
 
 ## Diagnostic tool
 

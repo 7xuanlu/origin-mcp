@@ -58,7 +58,7 @@ pub struct OriginMcpServer {
 // --- Primary tool params ---
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RememberParams {
+pub struct CaptureParams {
     #[schemars(
         description = "The memory content. Write as a complete statement with context and reasoning, not shorthand. One idea per memory."
     )]
@@ -137,9 +137,34 @@ pub struct ForgetParams {
     pub memory_id: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DistillParams {
+    #[schemars(
+        description = "Optional page ID. If provided, re-distills only that page from its current sources. If omitted, runs a full distillation pass over any clusters with new sources."
+    )]
+    pub page_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListPendingParams {
+    #[schemars(
+        description = "Max results, default 20. Increase for full audit, decrease for quick check-in."
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_usize_lenient")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConfirmMemoryParams {
+    #[schemars(
+        description = "The source_id of the memory to confirm. Get this from list_pending or recall results."
+    )]
+    pub memory_id: String,
+}
+
 // ===== Internal Implementations =====
 
-fn format_remember_success(resp: &StoreMemoryResponse) -> String {
+fn format_capture_success(resp: &StoreMemoryResponse) -> String {
     let mut msg = format!("Stored {}", resp.source_id);
     if !resp.warnings.is_empty() {
         msg.push_str("\nWarnings:");
@@ -263,7 +288,7 @@ fn format_doctor_message(status: &serde_json::Value) -> String {
         );
     } else if !anthropic_key_configured && local_model_loaded.is_none() {
         msg.push_str(
-            "\n\nBasic Memory works now: remember, recall, and context are available. \
+            "\n\nBasic Memory works now: capture, recall, and context are available. \
              To enable richer extraction and background refinement, run `origin model install` \
              or `origin key set anthropic`.",
         );
@@ -302,10 +327,13 @@ impl OriginMcpServer {
         }
     }
 
-    pub async fn remember_impl(&self, params: RememberParams) -> Result<CallToolResult, McpError> {
+    pub async fn capture_impl(&self, params: CaptureParams) -> Result<CallToolResult, McpError> {
+        // Tool was renamed `remember -> capture` in v0.4. The HTTP request
+        // body shape (StoreMemoryRequest) is unchanged; only the MCP-facing
+        // tool name shifted.
         let source_agent = self.resolve_source_agent(None);
         if let Some(uid) = self.resolve_user_id(None) {
-            tracing::debug!(user_id = %uid, "remember invoked");
+            tracing::debug!(user_id = %uid, "capture invoked");
         }
 
         let req = StoreMemoryRequest {
@@ -328,7 +356,7 @@ impl OriginMcpServer {
         };
 
         Ok(CallToolResult::success(vec![Content::text(
-            format_remember_success(&resp),
+            format_capture_success(&resp),
         )]))
     }
 
@@ -439,6 +467,62 @@ impl OriginMcpServer {
             .to_string(),
         )]))
     }
+
+    pub async fn distill_impl(&self, params: DistillParams) -> Result<CallToolResult, McpError> {
+        let path = match params.page_id.as_deref() {
+            Some(id) if !id.is_empty() => format!("/api/distill/{}", id),
+            _ => "/api/distill".to_string(),
+        };
+        match self
+            .client
+            .post::<serde_json::Value, serde_json::Value>(&path, &serde_json::json!({}))
+            .await
+        {
+            Ok(_) => Ok(CallToolResult::success(vec![Content::text(
+                match params.page_id {
+                    Some(id) => format!("Re-distilled page {}.", id),
+                    None => "Distillation pass triggered.".to_string(),
+                },
+            )])),
+            Err(e) => Ok(tool_error(e, "distill")),
+        }
+    }
+
+    pub async fn list_pending_impl(
+        &self,
+        params: ListPendingParams,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(20).min(100);
+        let path = format!("/api/memory/list?confirmed=false&limit={}", limit);
+        let value: serde_json::Value = match self.client.get(&path).await {
+            Ok(v) => v,
+            Err(e) => return Ok(tool_error(e, "list_pending")),
+        };
+        let body = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+
+    pub async fn confirm_memory_impl(&self, memory_id: &str) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Confirm operations are not available over remote connections. \
+                 Use the Origin desktop app or local MCP for review."
+                    .to_string(),
+            )]));
+        }
+        let path = format!("/api/memory/confirm/{}", memory_id);
+        match self
+            .client
+            .post::<serde_json::Value, serde_json::Value>(&path, &serde_json::json!({}))
+            .await
+        {
+            Ok(_) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Memory {} confirmed.",
+                memory_id
+            ))])),
+            Err(e) => Ok(tool_error(e, "confirm_memory")),
+        }
+    }
 }
 
 // ===== Tool Registrations =====
@@ -464,20 +548,20 @@ impl OriginMcpServer {
     // --- Primary Tools ---
 
     #[tool(
-        description = "Store a memory. Call PROACTIVELY when you learn something durable about the user — preferences, decisions, corrections, or facts about people/projects/tools they care about. Don't wait for the user to say 'remember this' — that's a floor, not a trigger.\n\nWrite content as a complete, self-contained statement — someone reading it months later with no conversation context should understand it. Include the WHY, not just the WHAT. Name people, projects, and tools explicitly.\n\nThe backend auto-classifies type, extracts structured fields, detects entities, and links to the knowledge graph. You don't need to set memory_type or structured_fields unless you're confident — omitting them gets better results than guessing wrong.\n\nDo NOT store: system prompts, boot logs, heartbeat/health checks, transient task state ('currently working on...'), tool output/responses, architecture dumps, single-word acknowledgments, or content you have already stored. Focus on durable facts, preferences, decisions, goals, and identity information. Each call is one atomic idea — \"prefers TDD\" and \"uses pytest\" are two calls, not one.",
+        description = "Capture a memory. Call PROACTIVELY when you learn something durable about the user — preferences, decisions, corrections, or facts about people/projects/tools they care about. Don't wait for the user to say 'remember this' or 'capture that' — that phrasing is a floor, not a trigger.\n\nWrite content as a complete, self-contained statement — someone reading it months later with no conversation context should understand it. Include the WHY, not just the WHAT. Name people, projects, and tools explicitly.\n\nThe backend auto-classifies type, extracts structured fields, detects entities, and links to the knowledge graph. You don't need to set memory_type or structured_fields unless you're confident — omitting them gets better results than guessing wrong.\n\nDo NOT store: system prompts, boot logs, heartbeat/health checks, transient task state ('currently working on...'), tool output/responses, architecture dumps, single-word acknowledgments, or content you have already stored. Focus on durable facts, preferences, decisions, lessons, gotchas, and identity information. Each call is one atomic idea — \"prefers TDD\" and \"uses pytest\" are two calls, not one.",
         annotations(
-            title = "Remember",
+            title = "Capture",
             read_only_hint = false,
             destructive_hint = false,
             idempotent_hint = false,
             open_world_hint = false
         )
     )]
-    async fn remember(
+    async fn capture(
         &self,
-        Parameters(params): Parameters<RememberParams>,
+        Parameters(params): Parameters<CaptureParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.remember_impl(params).await
+        self.capture_impl(params).await
     }
 
     #[tool(
@@ -525,6 +609,51 @@ impl OriginMcpServer {
         Parameters(params): Parameters<ForgetParams>,
     ) -> Result<CallToolResult, McpError> {
         self.forget_impl(&params.memory_id).await
+    }
+
+    #[tool(
+        description = "Trigger Origin's distillation pass. With no `page_id`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `page_id`, re-distills that single page from its current sources. Use when the user explicitly asks to synthesize, distill, or rebuild a page. The daemon also runs distillation periodically in the background, so don't trigger redundantly during normal flow.",
+        annotations(
+            title = "Distill",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn distill(
+        &self,
+        Parameters(params): Parameters<DistillParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.distill_impl(params).await
+    }
+
+    #[tool(
+        description = "List unconfirmed memories pending review. Use when the user wants to audit what got captured before it becomes authoritative — typical phrases: 'review pending', 'show unconfirmed', 'what got captured'. Pair with `confirm_memory` to accept and `forget` to reject.",
+        annotations(title = "List pending", read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_pending(
+        &self,
+        Parameters(params): Parameters<ListPendingParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.list_pending_impl(params).await
+    }
+
+    #[tool(
+        description = "Confirm a pending memory by source_id. Use during review to accept a memory the agent captured. The user typically picks from a `list_pending` result. To reject instead, call `forget` with the same `memory_id`.",
+        annotations(
+            title = "Confirm memory",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn confirm_memory(
+        &self,
+        Parameters(params): Parameters<ConfirmMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.confirm_memory_impl(&params.memory_id).await
     }
 }
 
@@ -680,12 +809,12 @@ mod tests {
         assert_ne!(TransportMode::Stdio, TransportMode::Http);
     }
 
-    // ===== Param deserialization: RememberParams =====
+    // ===== Param deserialization: CaptureParams =====
 
     #[test]
-    fn test_remember_params_minimal() {
+    fn test_capture_params_minimal() {
         let json = r#"{"content": "Lucian prefers dark mode"}"#;
-        let params: RememberParams = serde_json::from_str(json).unwrap();
+        let params: CaptureParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.content, "Lucian prefers dark mode");
         assert!(params.memory_type.is_none());
         assert!(params.domain.is_none());
@@ -695,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remember_params_full() {
+    fn test_capture_params_full() {
         let json = r#"{
             "content": "We chose PostgreSQL over MongoDB",
             "memory_type": "decision",
@@ -704,7 +833,7 @@ mod tests {
             "confidence": 0.95,
             "supersedes": "mem_abc123"
         }"#;
-        let params: RememberParams = serde_json::from_str(json).unwrap();
+        let params: CaptureParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.content, "We chose PostgreSQL over MongoDB");
         assert_eq!(params.memory_type.as_deref(), Some("decision"));
         assert_eq!(params.domain.as_deref(), Some("origin"));
@@ -714,9 +843,9 @@ mod tests {
     }
 
     #[test]
-    fn test_remember_params_missing_content_fails() {
+    fn test_capture_params_missing_content_fails() {
         let json = r#"{"memory_type": "fact"}"#;
-        let result = serde_json::from_str::<RememberParams>(json);
+        let result = serde_json::from_str::<CaptureParams>(json);
         assert!(result.is_err());
     }
 
@@ -811,7 +940,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_success_message_is_terse() {
+    fn capture_success_message_is_terse() {
         let resp = StoreMemoryResponse {
             source_id: "mem_abc".into(),
             chunks_created: 3,
@@ -823,7 +952,7 @@ mod tests {
             enrichment: String::new(),
             hint: String::new(),
         };
-        let msg = format_remember_success(&resp);
+        let msg = format_capture_success(&resp);
         assert_eq!(msg, "Stored mem_abc");
         assert!(!msg.contains("chunks"));
         assert!(!msg.contains("quality"));
@@ -831,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_success_message_surfaces_warnings() {
+    fn capture_success_message_surfaces_warnings() {
         let resp = StoreMemoryResponse {
             source_id: "mem_abc".into(),
             chunks_created: 1,
@@ -843,7 +972,7 @@ mod tests {
             enrichment: String::new(),
             hint: String::new(),
         };
-        let msg = format_remember_success(&resp);
+        let msg = format_capture_success(&resp);
         assert!(msg.starts_with("Stored mem_abc"));
         assert!(msg.contains("Warnings:"));
         assert!(msg.contains("decision memory missing required 'claim' field"));
@@ -863,7 +992,7 @@ mod tests {
         assert!(msg.contains("Mode: Basic Memory"));
         assert!(msg.contains("On-device model: not selected"));
         assert!(msg.contains("Background refinement: paused"));
-        assert!(msg.contains("Basic Memory works now: remember, recall, and context are available"));
+        assert!(msg.contains("Basic Memory works now: capture, recall, and context are available"));
         assert!(msg.contains("origin model install"));
         assert!(msg.contains("origin key set anthropic"));
     }
@@ -968,10 +1097,10 @@ mod tests {
     }
 
     #[test]
-    fn remember_params_structured_fields_schema_is_object() {
+    fn capture_params_structured_fields_schema_is_object() {
         use schemars::schema_for;
 
-        let schema = schema_for!(RememberParams);
+        let schema = schema_for!(CaptureParams);
         let json = serde_json::to_value(&schema).unwrap();
         let sf_schema = json
             .pointer("/properties/structured_fields")
@@ -1352,9 +1481,9 @@ mod tests {
     // ===== Remember request construction =====
 
     #[test]
-    fn test_remember_constructs_store_request_with_entity() {
+    fn test_capture_constructs_store_request_with_entity() {
         let server = make_server(TransportMode::Stdio, "claude", None);
-        let params = RememberParams {
+        let params = CaptureParams {
             content: "Alice manages the frontend team".into(),
             memory_type: Some("fact".into()),
             domain: Some("work".into()),
@@ -1365,7 +1494,7 @@ mod tests {
             retrieval_cue: None,
         };
 
-        // Replicate remember_impl's request construction
+        // Replicate capture_impl's request construction
         let source_agent = server.resolve_source_agent(None);
 
         let req = StoreMemoryRequest {
@@ -1433,7 +1562,7 @@ mod tests {
     #[test]
     fn test_remember_passes_through_all_5_types() {
         for t in &["identity", "preference", "fact", "decision", "goal"] {
-            let params = RememberParams {
+            let params = CaptureParams {
                 content: "test".into(),
                 memory_type: Some(t.to_string()),
                 domain: None,
@@ -1450,13 +1579,13 @@ mod tests {
     // ===== Structured fields in remember params =====
 
     #[test]
-    fn test_remember_params_with_structured_fields_and_cue() {
+    fn test_capture_params_with_structured_fields_and_cue() {
         let json = r#"{
             "content": "Lucian prefers dark mode",
             "structured_fields": {"theme":"dark"},
             "retrieval_cue": "What theme does Lucian prefer?"
         }"#;
-        let params: RememberParams = serde_json::from_str(json).unwrap();
+        let params: CaptureParams = serde_json::from_str(json).unwrap();
         let structured_fields = params.structured_fields.expect("structured_fields");
         assert_eq!(
             structured_fields.get("theme"),
@@ -1668,12 +1797,12 @@ mod tests {
     }
 
     #[test]
-    fn remember_description_calls_out_atomic() {
+    fn capture_description_calls_out_atomic() {
         let descriptions = tool_descriptions();
-        let remember = descriptions.get("remember").expect("remember tool exists");
+        let capture = descriptions.get("capture").expect("capture tool exists");
         assert!(
-            remember.contains("Each call is one atomic idea"),
-            "remember description must call out atomic-per-call explicitly, got: {remember}"
+            capture.contains("Each call is one atomic idea"),
+            "capture description must call out atomic-per-call explicitly, got: {capture}"
         );
     }
 

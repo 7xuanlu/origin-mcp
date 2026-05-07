@@ -10,7 +10,7 @@
 
 use origin_mcp::client::OriginClient;
 use origin_mcp::tools::{
-    ContextParams, OriginMcpServer, RecallParams, RememberParams, TransportMode,
+    CaptureParams, ContextParams, OriginMcpServer, RecallParams, TransportMode,
 };
 use origin_types::memory::SearchResult;
 use origin_types::responses::{
@@ -116,7 +116,7 @@ async fn t1_remember_roundtrip() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "anything".into(),
             memory_type: None,
             domain: None,
@@ -127,7 +127,7 @@ async fn t1_remember_roundtrip() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert_eq!(text, "Stored mem_t1");
@@ -161,7 +161,7 @@ async fn t2_remember_surfaces_warnings_when_present() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "anything".into(),
             memory_type: Some("decision".into()),
             domain: None,
@@ -172,7 +172,7 @@ async fn t2_remember_surfaces_warnings_when_present() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert!(
@@ -218,7 +218,7 @@ async fn t3_structured_fields_schema_is_object() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "prefers dark mode".into(),
             memory_type: None,
             domain: None,
@@ -229,7 +229,7 @@ async fn t3_structured_fields_schema_is_object() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert_eq!(text, "Stored mem_t3");
@@ -240,7 +240,7 @@ async fn t3_structured_fields_schema_is_object() {
         serde_json::json!({ "theme": "dark" })
     );
 
-    let schema = schema_for!(RememberParams);
+    let schema = schema_for!(CaptureParams);
     let json = serde_json::to_value(&schema).unwrap();
     let sf = json
         .pointer("/properties/structured_fields")
@@ -337,7 +337,7 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "some content".into(),
             memory_type: Some("fact".into()),
             domain: None,
@@ -348,7 +348,7 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert_eq!(text, "Stored mem_t5");
@@ -557,7 +557,7 @@ async fn t10_remember_request_does_not_contain_user_id() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "anything".into(),
             memory_type: None,
             domain: None,
@@ -568,7 +568,7 @@ async fn t10_remember_request_does_not_contain_user_id() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert_eq!(text, "Stored mem_t10");
@@ -606,7 +606,7 @@ async fn t11_extraction_method_none_not_in_text() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "anything".into(),
             memory_type: None,
             domain: None,
@@ -617,7 +617,7 @@ async fn t11_extraction_method_none_not_in_text() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed");
+        .expect("capture_impl failed");
 
     let text = text_of(&result);
     assert!(
@@ -711,7 +711,7 @@ async fn t12_forward_compat_response_missing_extraction_method() {
 
     let server = make_server(client);
     let result = server
-        .remember_impl(RememberParams {
+        .capture_impl(CaptureParams {
             content: "anything".into(),
             memory_type: None,
             domain: None,
@@ -722,7 +722,7 @@ async fn t12_forward_compat_response_missing_extraction_method() {
             retrieval_cue: None,
         })
         .await
-        .expect("remember_impl failed against pre-D9 response");
+        .expect("capture_impl failed against pre-D9 response");
 
     let text = text_of(&result);
     assert_eq!(text, "Stored mem_t12");
