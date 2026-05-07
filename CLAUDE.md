@@ -36,7 +36,7 @@ AI tool (stdio/HTTP) -> origin-mcp -> Origin daemon (HTTP :7878) -> libSQL + emb
 |------|---------|
 | `src/main.rs` | Entry point, CLI args (clap), transport selection |
 | `src/lib.rs` | Library root |
-| `src/tools.rs` | `OriginMcpServer` struct, 4 MCP tools (remember/recall/context/forget), parameter structs, agent instructions |
+| `src/tools.rs` | `OriginMcpServer` struct, 5 MCP tools (capture/recall/context/forget/doctor), parameter structs, agent instructions. `capture` was renamed from `remember` in v0.4. |
 | `src/client.rs` | `OriginClient` HTTP wrapper for the Origin daemon API |
 | `src/types.rs` | Response types (kept minimal, forward-compatible with serde_json::Value where needed) |
 | `src/serve.rs` | Streamable HTTP server (axum-based, for remote/tunnel access) |
