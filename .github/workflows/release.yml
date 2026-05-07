@@ -181,6 +181,16 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Sync npm version from tag
+        # The git tag is the source of truth; sync npm/package.json before
+        # publishing so a forgotten version bump in npm/package.json does not
+        # block release (skipping straight to a higher version on retry).
+        # Skip cleanly if the version on the tag is already published.
+        working-directory: npm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Publish
         working-directory: npm
         run: npm publish --provenance --access public
